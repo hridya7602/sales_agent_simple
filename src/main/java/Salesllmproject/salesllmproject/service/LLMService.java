@@ -16,7 +16,7 @@ public class LLMService {
 
     public LLMService(
             @Value("${groq.api.key:}") String apiKey,
-            @Value("${groq.model:llama-3.1-70b}") String defaultModel
+            @Value("${groq.model:llama-3.1-8b-instant}") String defaultModel
     ) {
         this.webClient = WebClient.builder()
                 .baseUrl("https://api.groq.com/openai/v1")
@@ -29,20 +29,36 @@ public class LLMService {
         Object model = options != null ? options.getOrDefault("model", defaultModel) : defaultModel;
         Object temperature = options != null ? options.getOrDefault("temperature", 0.2) : 0.2;
 
-        Map<String, Object> request = Map.of(
+        // Use standard chat completions endpoint
+        Map<String, Object> chatRequest = Map.of(
                 "model", model,
-                "messages", List.of(Map.of("role", "user", "content", prompt)),
+                "messages", List.of(
+                        Map.of("role", "user", "content", prompt)
+                ),
                 "temperature", temperature
         );
 
-        Map response = webClient.post()
-                .uri("/chat/completions")
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(request)
-                .retrieve()
-                .bodyToMono(Map.class)
-                .block();
+        try {
+            Map response = webClient.post()
+                    .uri("/chat/completions")  // ← CHANGED THIS
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(chatRequest)
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .block();
 
+            return extractChatContent(response);
+        } catch (org.springframework.web.reactive.function.client.WebClientResponseException e) {
+            String body = e.getResponseBodyAsString();
+            System.err.println("Groq API Error: " + e.getStatusCode() + " - " + body);
+            return "{\"error\":\"Groq API error: " + e.getStatusCode() + "\"}";
+        } catch (Exception e) {
+            System.err.println("LLM Service Error: " + e.getMessage());
+            return "{\"error\":\"LLM error: " + e.getMessage() + "\"}";
+        }
+    }
+
+    private String extractChatContent(Map response) {
         if (response == null) return "";
         Object choicesObj = response.get("choices");
         if (!(choicesObj instanceof List)) return "";
@@ -55,8 +71,6 @@ public class LLMService {
         if (!(messageObj instanceof Map)) return "";
         Map message = (Map) messageObj;
         Object content = message.get("content");
-        return content != null ? String.valueOf(content) : "";
+        return content != null ? String.valueOf(content).trim() : "";
     }
 }
-
-
